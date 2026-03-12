@@ -296,7 +296,7 @@
                 const match = pattern.exec(window.location.href);
                 if (!match) return null;
                 try {
-                    return decodeURIComponent(match[1].replace(/\+/g, ' '));
+                    return decodeURIComponent(match[1]);
                 } catch {
                     return match[1];
                 }
@@ -322,8 +322,16 @@
                 if (!shareParam) return false;
                 
                 const candidateValues = [shareParam];
+                const plusFixed = shareParam.replace(/ /g, '+');
+                if (plusFixed !== shareParam) candidateValues.push(plusFixed);
                 const normalized = this.normalizeEncodedString(shareParam);
                 if (normalized !== shareParam) candidateValues.push(normalized);
+                if (normalized !== plusFixed) {
+                    const normalizedPlusFixed = normalized.replace(/ /g, '+');
+                    if (!candidateValues.includes(normalizedPlusFixed)) {
+                        candidateValues.push(normalizedPlusFixed);
+                    }
+                }
                 
                 for (const value of candidateValues) {
                     try {

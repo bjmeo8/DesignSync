@@ -7,6 +7,20 @@
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://unpkg.com/@phosphor-icons/web"></script>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <script src="https://www.gstatic.com/firebasejs/9.22.2/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/9.22.2/firebase-database-compat.js"></script>
+    <script>
+        window.DESIGNSYNC_FIREBASE_CONFIG = window.DESIGNSYNC_FIREBASE_CONFIG || {
+            // TODO: Remplir avec votre configuration Firebase
+            apiKey: "AIzaSyA1Rq5KSDMdW99SOj8Tc5Lahy9A8pg7I9A",
+            authDomain: "studio-6663266681-d8467.firebaseapp.com",
+            databaseURL: "https://studio-6663266681-d8467-default-rtdb.firebaseio.com",
+            projectId: "studio-6663266681-d8467",
+            storageBucket: "studio-6663266681-d8467.firebasestorage.app",
+            messagingSenderId: "1097226386675",
+            appId: "1:1097226386675:web:ac391ac3028a4900c78b86"
+        };
+    </script>
     
     <script>
         tailwind.config = {
@@ -626,6 +640,11 @@
             uploadedCoverBase64: null,
             viewerMode: false,
             sharedData: null,
+            firebaseServices: {
+                enabled: false,
+                app: null,
+                db: null
+            },
             
             // Canvas State
             canvas: {
@@ -649,9 +668,10 @@
             },
 
             // Initialization
-            init() {
+            async init() {
                 this.loadData();
-                const shared = this.checkSharedLink();
+                this.initFirebase();
+                const shared = await this.checkSharedLink();
                 if (!shared) {
                     this.renderDashboard();
                 }
@@ -763,8 +783,49 @@
                 }
                 return current;
             },
+            initFirebase() {
+                if (this.firebaseServices.enabled) return;
+                if (!window.firebase || !window.DESIGNSYNC_FIREBASE_CONFIG) return;
+                const cfg = window.DESIGNSYNC_FIREBASE_CONFIG;
+                if (!cfg || !cfg.apiKey || cfg.apiKey === "YOUR_API_KEY") {
+                    console.warn('Configuration Firebase manquante. Le partage en ligne est désactivé.');
+                    return;
+                }
+                try {
+                    if (firebase.apps && firebase.apps.length) {
+                        this.firebaseServices.app = firebase.app();
+                    } else {
+                        this.firebaseServices.app = firebase.initializeApp(cfg);
+                    }
+                    this.firebaseServices.db = firebase.database();
+                    this.firebaseServices.enabled = true;
+                } catch (e) {
+                    console.error('Initialisation Firebase impossible', e);
+                    this.firebaseServices.enabled = false;
+                }
+            },
 
-            checkSharedLink() {
+            async checkSharedLink() {
+                const shareId = this.getUrlParam('shareId');
+                if (shareId) {
+                    if (!this.firebaseServices.enabled) {
+                        this.showToast('Ce lien nécessite Firebase RTDB. Configurez-le pour l\'ouvrir.');
+                        return false;
+                    }
+                    const remotePayload = await this.fetchSharedDataById(shareId);
+                    if (remotePayload?.space && remotePayload?.designs) {
+                        this.viewerMode = true;
+                        this.sharedData = {
+                            space: remotePayload.space,
+                            designs: remotePayload.designs
+                        };
+                        document.body.classList.add('viewer-mode');
+                        return true;
+                    }
+                    this.showToast('Lien de partage introuvable ou expiré.');
+                    return false;
+                }
+                
                 let shareParam = this.getUrlParam('share');
                 if (!shareParam) {
                     shareParam = this.getRawHashPayload();
@@ -790,6 +851,32 @@
                 
                 console.error('Lien de partage invalide');
                 return false;
+            },
+            async fetchSharedDataById(id) {
+                if (!this.firebaseServices.enabled || !id) return null;
+                try {
+                    const snapshot = await this.firebaseServices.db.ref(`sharedSpaces/${id}`).once('value');
+                    const value = snapshot.val();
+                    if (!value) return null;
+                    return value.payload || value;
+                } catch (e) {
+                    console.error('Impossible de récupérer le partage Firebase', e);
+                    return null;
+                }
+            },
+            async saveSharedPayload(payload) {
+                if (!this.firebaseServices.enabled) return null;
+                try {
+                    const ref = this.firebaseServices.db.ref('sharedSpaces').push();
+                    await ref.set({
+                        payload,
+                        createdAt: Date.now()
+                    });
+                    return ref.key;
+                } catch (e) {
+                    console.error('Erreur lors de l\'enregistrement Firebase', e);
+                    return null;
+                }
             },
 
             enterSharedView() {
@@ -1332,8 +1419,20 @@
                 t.classList.remove('translate-y-20', 'opacity-0');
                 setTimeout(() => t.classList.add('translate-y-20', 'opacity-0'), 3000);
             },
-
-            shareSpace() {
+            generateLocalShareLink(payload, baseUrl) {
+                let encoded = '';
+                try {
+                    encoded = LZString.compressToEncodedURIComponent(JSON.stringify(payload));
+                } catch (_) {
+                    encoded = '';
+                }
+                if (!encoded) {
+                    encoded = this.toUrlSafeBase64(this.base64EncodeUnicode(JSON.stringify(payload)));
+                }
+                if (!encoded) return null;
+                return `${baseUrl}#share=${encoded}`;
+            },
+            async shareSpace() {
                 if (this.viewerMode) {
                     this.showToast('Mode lecture uniquement');
                     return;
@@ -1349,25 +1448,27 @@
                     space: JSON.parse(JSON.stringify(space)),
                     designs: JSON.parse(JSON.stringify(designs))
                 };
-                let encoded = '';
-                try {
-                    encoded = LZString.compressToEncodedURIComponent(JSON.stringify(payload));
-                } catch (_) {
-                    encoded = '';
-                }
-                if (!encoded) {
-                    encoded = this.toUrlSafeBase64(this.base64EncodeUnicode(JSON.stringify(payload)));
-                }
-                if (!encoded) {
-                    this.showToast('Impossible de générer le lien de partage');
-                    return;
-                }
                 const hasOrigin = window.location.origin && window.location.origin !== 'null';
                 // When running from file:// the origin is "null", so fall back to the current file path
                 const baseUrl = hasOrigin
                     ? `${window.location.origin}${window.location.pathname}`
                     : window.location.href.split('#')[0].split('?')[0];
-                const shareUrl = `${baseUrl}#share=${encoded}`;
+                let shareUrl = '';
+                if (this.firebaseServices.enabled) {
+                    const remoteId = await this.saveSharedPayload(payload);
+                    if (remoteId) {
+                        shareUrl = `${baseUrl}?shareId=${encodeURIComponent(remoteId)}`;
+                    } else {
+                        this.showToast('Partage en ligne indisponible, génération d\'un lien local.');
+                    }
+                }
+                if (!shareUrl) {
+                    shareUrl = this.generateLocalShareLink(payload, baseUrl);
+                }
+                if (!shareUrl) {
+                    this.showToast('Impossible de générer le lien de partage');
+                    return;
+                }
                 navigator.clipboard.writeText(shareUrl).then(() => {
                     this.showToast('Lien de partage copié dans le presse-papier !');
                 }).catch(() => {

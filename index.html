@@ -1,0 +1,903 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>DesignSync - Plateforme de partage de design</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://unpkg.com/@phosphor-icons/web"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    fontFamily: { sans: ['Inter', 'sans-serif'] },
+                    colors: {
+                        brand: { 50: '#eff6ff', 100: '#dbeafe', 500: '#3b82f6', 600: '#2563eb', 900: '#1e3a8a' }
+                    }
+                }
+            }
+        }
+    </script>
+    <style>
+        body { font-family: 'Inter', sans-serif; overflow: hidden; background-color: #f8fafc; }
+        body.viewer-mode .viewer-hidden { display: none !important; }
+        body.viewer-mode #view-dashboard { display: none !important; }
+        
+        /* Custom Scrollbar */
+        ::-webkit-scrollbar { width: 8px; height: 8px; }
+        ::-webkit-scrollbar-track { background: transparent; }
+        ::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 4px; }
+        ::-webkit-scrollbar-thumb:hover { background: #94a3b8; }
+
+        /* Canvas Pattern */
+        .canvas-bg {
+            background-image: radial-gradient(#cbd5e1 1px, transparent 0);
+            background-size: 20px 20px;
+        }
+
+        /* Resizable Design Node */
+        .design-node {
+            resize: both;
+            overflow: hidden;
+            min-width: 320px;
+            min-height: 200px;
+            transition: width 0.3s ease, height 0.3s ease; /* Smooth responsive resize */
+        }
+        
+        /* Disable transition when user is dragging to resize manually */
+        .design-node:active {
+            transition: none;
+        }
+
+        .design-node iframe {
+            width: 100%;
+            height: calc(100% - 40px); /* Minus header height */
+            border: none;
+            background: white;
+        }
+
+        /* Prevent iframe from eating mouse events during drag/resize */
+        .is-interacting iframe { pointer-events: none; }
+        
+        /* Utility animations */
+        .fade-in { animation: fadeIn 0.2s ease-in-out; }
+        @keyframes fadeIn { from { opacity: 0; transform: scale(0.95); } to { opacity: 1; transform: scale(1); } }
+    </style>
+</head>
+<body class="text-slate-800 antialiased h-screen w-screen flex flex-col">
+
+    <!-- APP CONTAINER -->
+    <div id="app" class="w-full h-full relative flex flex-col">
+        
+        <!-- ================= DASHBOARD VIEW ================= -->
+        <div id="view-dashboard" class="flex-1 overflow-y-auto p-8 fade-in">
+            <header class="max-w-6xl mx-auto mb-10 flex justify-between items-center">
+                <div class="flex items-center gap-3">
+                    <div class="w-10 h-10 bg-brand-600 rounded-xl flex items-center justify-center text-white shadow-lg shadow-brand-500/30">
+                        <i class="ph ph-paint-brush-broad text-2xl"></i>
+                    </div>
+                    <h1 class="text-2xl font-bold text-slate-900">DesignSync</h1>
+                </div>
+                <button id="btn-new-space" onclick="app.openCreateSpaceModal()" class="viewer-hidden bg-slate-900 hover:bg-slate-800 text-white px-5 py-2.5 rounded-lg font-medium transition-all shadow-md flex items-center gap-2">
+                    <i class="ph ph-plus-circle text-lg"></i>
+                    Nouvel espace
+                </button>
+            </header>
+
+            <main class="max-w-6xl mx-auto">
+                <h2 class="text-lg font-semibold text-slate-600 mb-6">Vos espaces de design</h2>
+                <div id="spaces-grid" class="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-4 gap-6">
+                    <!-- Spaces injected here -->
+                </div>
+            </main>
+        </div>
+
+
+        <!-- ================= CANVAS VIEW ================= -->
+        <div id="view-canvas" class="flex-1 relative hidden flex-col h-full w-full fade-in">
+            <!-- Canvas Toolbar -->
+            <div class="absolute top-0 left-0 w-full p-4 flex justify-between items-center z-40 pointer-events-none">
+                <div class="flex items-center gap-4 bg-white/90 backdrop-blur-md px-4 py-2 rounded-xl shadow-sm border border-slate-200 pointer-events-auto">
+                    <button id="btn-back-dashboard" onclick="app.openDashboard()" class="text-slate-500 hover:text-slate-900 transition-colors viewer-hidden">
+                        <i class="ph ph-arrow-left text-xl"></i>
+                    </button>
+                    <div class="h-6 w-px bg-slate-200"></div>
+                    <h2 id="current-space-title" class="font-semibold text-slate-800">Nom de l'espace</h2>
+                </div>
+
+                <div class="flex items-center gap-3 pointer-events-auto">
+                    <div class="bg-white/90 backdrop-blur-md px-3 py-2 rounded-xl shadow-sm border border-slate-200 text-sm font-medium text-slate-600 flex items-center gap-2">
+                        <i class="ph ph-magnifying-glass-plus"></i> <span id="zoom-indicator">100%</span>
+                    </div>
+                    <button id="btn-share-space" onclick="app.shareSpace()" class="viewer-hidden bg-brand-600 hover:bg-brand-500 text-white px-5 py-2 rounded-xl font-medium transition-all shadow-md shadow-brand-500/20 flex items-center gap-2">
+                        <i class="ph ph-share-network text-lg"></i>
+                        Partager
+                    </button>
+                </div>
+            </div>
+
+            <!-- The Infinite Canvas Area -->
+            <div id="canvas-container" class="w-full h-full bg-slate-50 relative overflow-hidden cursor-grab canvas-bg">
+                <div id="canvas-inner" class="absolute top-0 left-0 origin-top-left">
+                    <!-- Designs will be injected here -->
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- ================= CONTEXT MENU ================= -->
+    <div id="context-menu" class="viewer-hidden hidden absolute z-50 bg-white rounded-xl shadow-xl border border-slate-100 py-1.5 min-w-[200px] text-sm font-medium text-slate-700 fade-in">
+        <button onclick="app.openAddDesignModal()" class="w-full text-left px-4 py-2 hover:bg-slate-50 hover:text-brand-600 flex items-center gap-2 transition-colors">
+            <i class="ph ph-plus-square text-lg"></i> Ajouter un design ici
+        </button>
+        <div class="h-px bg-slate-100 my-1"></div>
+        <button onclick="app.resetCanvasView()" class="w-full text-left px-4 py-2 hover:bg-slate-50 flex items-center gap-2 transition-colors">
+            <i class="ph ph-arrows-out-simple text-lg"></i> Réinitialiser la vue
+        </button>
+    </div>
+
+    <!-- ================= MODALS ================= -->
+    
+    <!-- Modal: Create Space -->
+    <div id="modal-create-space" class="hidden fixed inset-0 z-[100] bg-slate-900/40 backdrop-blur-sm flex items-center justify-center p-4">
+        <div class="bg-white rounded-2xl shadow-2xl w-full max-w-md overflow-hidden fade-in">
+            <div class="p-6">
+                <div class="flex justify-between items-center mb-5">
+                    <h3 class="text-xl font-bold text-slate-900">Nouvel espace</h3>
+                    <button onclick="app.hideModal('modal-create-space')" class="text-slate-400 hover:text-slate-700">
+                        <i class="ph ph-x text-xl"></i>
+                    </button>
+                </div>
+                <form id="form-create-space" onsubmit="app.createSpace(event)">
+                    <div class="space-y-4">
+                        <div>
+                            <label class="block text-sm font-medium text-slate-700 mb-1">Nom du projet</label>
+                            <input type="text" id="space-name" required class="w-full px-4 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-brand-500 focus:border-brand-500 outline-none transition-all" placeholder="ex: Refonte Site E-commerce">
+                        </div>
+                        <div>
+                            <label class="block text-sm font-medium text-slate-700 mb-1">Image de couverture</label>
+                            <div class="flex gap-2">
+                                <input type="url" id="space-cover-url" class="flex-1 px-4 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-brand-500 focus:border-brand-500 outline-none transition-all text-sm" placeholder="URL (optionnelle)">
+                                <label class="cursor-pointer bg-slate-100 hover:bg-slate-200 text-slate-700 px-4 py-2 rounded-lg border border-slate-300 transition-colors flex items-center gap-2 text-sm font-medium">
+                                    <i class="ph ph-upload-simple"></i> Fichier
+                                    <input type="file" id="space-cover-file" accept="image/*" class="hidden" onchange="app.handleCoverFile(event)">
+                                </label>
+                            </div>
+                            <div id="cover-preview" class="mt-2 text-xs font-medium text-brand-600 hidden flex items-center gap-1">
+                                <i class="ph ph-check-circle"></i> <span id="cover-preview-name">Fichier sélectionné</span>
+                                <button type="button" onclick="app.removeCoverFile()" class="ml-2 text-red-500 hover:text-red-700"><i class="ph ph-x"></i></button>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="mt-8 flex justify-end gap-3">
+                        <button type="button" onclick="app.hideModal('modal-create-space')" class="px-5 py-2 text-slate-600 font-medium hover:bg-slate-100 rounded-lg transition-colors">Annuler</button>
+                        <button type="submit" class="bg-brand-600 hover:bg-brand-700 text-white px-5 py-2 rounded-lg font-medium shadow-md transition-colors">Créer l'espace</button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+
+    <!-- Modal: Add Design -->
+    <div id="modal-add-design" class="hidden fixed inset-0 z-[100] bg-slate-900/40 backdrop-blur-sm flex items-center justify-center p-4">
+        <div class="bg-white rounded-2xl shadow-2xl w-full max-w-2xl overflow-hidden fade-in flex flex-col max-h-[90vh]">
+            <div class="p-6 border-b border-slate-100 flex justify-between items-center">
+                <h3 class="text-xl font-bold text-slate-900">Ajouter un design</h3>
+                <button onclick="app.hideModal('modal-add-design')" class="text-slate-400 hover:text-slate-700">
+                    <i class="ph ph-x text-xl"></i>
+                </button>
+            </div>
+            <div class="p-6 overflow-y-auto flex-1">
+                <form id="form-add-design" onsubmit="app.saveDesign(event)">
+                    <div class="space-y-5">
+                        <div class="grid grid-cols-2 gap-4">
+                            <div>
+                                <label class="block text-sm font-medium text-slate-700 mb-1">Nom du composant</label>
+                                <input type="text" id="design-name" required class="w-full px-4 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-brand-500 focus:border-brand-500 outline-none transition-all" placeholder="ex: Hero Section">
+                            </div>
+                            <div>
+                                <label class="block text-sm font-medium text-slate-700 mb-1">Version</label>
+                                <input type="text" id="design-version" required value="v1.0" class="w-full px-4 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-brand-500 focus:border-brand-500 outline-none transition-all">
+                            </div>
+                        </div>
+                        <div>
+                            <div class="flex justify-between items-center mb-1">
+                                <label class="block text-sm font-medium text-slate-700">Code HTML / Tailwind</label>
+                                <label class="cursor-pointer text-xs bg-brand-50 hover:bg-brand-100 text-brand-600 border border-brand-200 px-3 py-1.5 rounded-lg font-medium transition-colors flex items-center gap-1">
+                                    <i class="ph ph-file-html text-base"></i> Importer fichier HTML
+                                    <input type="file" id="design-file" accept=".html" class="hidden" onchange="app.handleHtmlFile(event)">
+                                </label>
+                            </div>
+                            <textarea id="design-html" required rows="10" class="w-full px-4 py-3 border border-slate-300 rounded-lg focus:ring-2 focus:ring-brand-500 focus:border-brand-500 outline-none transition-all font-mono text-sm text-slate-800 bg-slate-50" placeholder='<div class="p-8 bg-blue-500 text-white rounded-xl shadow-lg">\n  <h1 class="text-3xl font-bold">Hello World</h1>\n</div>'></textarea>
+                        </div>
+                    </div>
+                </form>
+            </div>
+            <div class="p-6 border-t border-slate-100 flex justify-end gap-3 bg-slate-50">
+                <button type="button" onclick="app.hideModal('modal-add-design')" class="px-5 py-2 text-slate-600 font-medium hover:bg-slate-200 rounded-lg transition-colors">Annuler</button>
+                <button type="submit" form="form-add-design" class="bg-slate-900 hover:bg-slate-800 text-white px-5 py-2 rounded-lg font-medium shadow-md transition-colors flex items-center gap-2">
+                    <i class="ph ph-check-circle"></i> Ajouter au canva
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Toast Notification -->
+    <div id="toast" class="fixed bottom-6 right-6 transform translate-y-20 opacity-0 transition-all duration-300 z-[200] bg-slate-900 text-white px-6 py-3 rounded-xl shadow-2xl font-medium flex items-center gap-3">
+        <i class="ph ph-info text-xl text-brand-400"></i>
+        <span id="toast-message">Message</span>
+    </div>
+
+    <!-- JAVASCRIPT APP LOGIC -->
+    <script>
+        const app = {
+            // State
+            db: { spaces: [], designs: [] },
+            currentSpaceId: null,
+            uploadedCoverBase64: null,
+            viewerMode: false,
+            sharedData: null,
+            
+            // Canvas State
+            canvas: {
+                scale: 1,
+                translateX: 0,
+                translateY: 0,
+                isPanning: false,
+                startX: 0,
+                startY: 0,
+                targetClickX: 0,
+                targetClickY: 0
+            },
+            
+            // Drag State for Nodes
+            drag: {
+                activeNodeId: null,
+                startX: 0,
+                startY: 0,
+                initialNodeX: 0,
+                initialNodeY: 0
+            },
+
+            // Initialization
+            init() {
+                this.loadData();
+                const shared = this.checkSharedLink();
+                if (!shared) {
+                    this.renderDashboard();
+                }
+                this.setupCanvasEvents();
+                this.setupNodeDragEvents();
+                
+                // Close context menu on external click
+                document.addEventListener('click', (e) => {
+                    if (e.button !== 2) this.hideContextMenu();
+                });
+
+                if (shared) {
+                    this.enterSharedView();
+                }
+            },
+
+            base64EncodeUnicode(str) {
+                return btoa(encodeURIComponent(str).replace(/%([0-9A-F]{2})/g, (_, p1) =>
+                    String.fromCharCode('0x' + p1)
+                ));
+            },
+            base64DecodeUnicode(str) {
+                return decodeURIComponent(atob(str).split('').map(c =>
+                    '%' + ('00' + c.charCodeAt(0).toString(16)).slice(-2)
+                ).join(''));
+            },
+
+            checkSharedLink() {
+                const params = new URLSearchParams(window.location.search);
+                const shareParam = params.get('share');
+                if (!shareParam) return false;
+                try {
+                    const decoded = JSON.parse(this.base64DecodeUnicode(decodeURIComponent(shareParam)));
+                    if (decoded?.space && decoded?.designs) {
+                        this.viewerMode = true;
+                        this.sharedData = {
+                            space: decoded.space,
+                            designs: decoded.designs
+                        };
+                        document.body.classList.add('viewer-mode');
+                        return true;
+                    }
+                } catch (e) {
+                    console.error('Lien de partage invalide', e);
+                }
+                return false;
+            },
+
+            enterSharedView() {
+                if (!this.sharedData?.space) {
+                    this.showToast('Lien de partage invalide');
+                    return;
+                }
+                this.currentSpaceId = this.sharedData.space.id;
+                const dashboard = document.getElementById('view-dashboard');
+                dashboard.classList.add('hidden');
+                const canvasView = document.getElementById('view-canvas');
+                canvasView.classList.remove('hidden');
+                const titleEl = document.getElementById('current-space-title');
+                if (titleEl) titleEl.textContent = this.sharedData.space.name;
+                document.body.classList.add('viewer-mode');
+                this.resetCanvasView();
+                this.renderCanvas();
+            },
+
+            // Database Operations (localStorage)
+            loadData() {
+                const stored = localStorage.getItem('designsync_db');
+                if (stored) {
+                    try { this.db = JSON.parse(stored); } catch(e) {}
+                }
+            },
+            saveData() {
+                if (this.viewerMode) return;
+                try {
+                    localStorage.setItem('designsync_db', JSON.stringify(this.db));
+                } catch (e) {
+                    alert("Attention: Le stockage local est plein. Essayez de supprimer des espaces ou d'utiliser des URLs d'images au lieu d'importer des fichiers lourds.");
+                }
+            },
+            getActiveSpaces() {
+                if (this.viewerMode && this.sharedData) return [this.sharedData.space];
+                return this.db.spaces;
+            },
+            getDesignCollection() {
+                if (this.viewerMode && this.sharedData) return this.sharedData.designs || [];
+                return this.db.designs;
+            },
+            getSpaceById(id) {
+                if (this.viewerMode && this.sharedData) {
+                    return this.sharedData.space && this.sharedData.space.id === id ? this.sharedData.space : null;
+                }
+                return this.db.spaces.find(s => s.id === id);
+            },
+            getSpaceDesigns(spaceId) {
+                return this.getDesignCollection().filter(d => d.spaceId === spaceId);
+            },
+
+            // View Management
+            openDashboard() {
+                if (this.viewerMode) return;
+                this.currentSpaceId = null;
+                const viewCanvas = document.getElementById('view-canvas');
+                // Remove display property to prevent it from overriding the hidden class
+                viewCanvas.style.display = ''; 
+                viewCanvas.classList.add('hidden');
+                
+                document.getElementById('view-dashboard').classList.remove('hidden');
+                this.renderDashboard();
+            },
+            
+            openSpace(id) {
+                if (this.viewerMode) return;
+                this.currentSpaceId = id;
+                const space = this.getSpaceById(id);
+                document.getElementById('current-space-title').textContent = space.name;
+                
+                document.getElementById('view-dashboard').classList.add('hidden');
+                const viewCanvas = document.getElementById('view-canvas');
+                viewCanvas.classList.remove('hidden');
+                
+                this.resetCanvasView();
+                this.renderCanvas();
+            },
+
+            // Dashboard Rendering
+            renderDashboard() {
+                const grid = document.getElementById('spaces-grid');
+                grid.innerHTML = '';
+                
+                if (this.db.spaces.length === 0) {
+                    grid.innerHTML = `
+                        <div class="col-span-full py-20 text-center flex flex-col items-center justify-center">
+                            <div class="w-20 h-20 bg-slate-100 text-slate-300 rounded-full flex items-center justify-center mb-4">
+                                <i class="ph ph-folder-open text-4xl"></i>
+                            </div>
+                            <h3 class="text-lg font-semibold text-slate-600 mb-1">Aucun espace pour le moment</h3>
+                            <p class="text-slate-400 mb-6 max-w-sm">Créez votre premier espace pour commencer à y déposer et partager vos designs HTML.</p>
+                            <button onclick="app.openCreateSpaceModal()" class="text-brand-600 font-medium hover:text-brand-700">Créer un espace &rarr;</button>
+                        </div>
+                    `;
+                    return;
+                }
+
+                this.db.spaces.forEach(space => {
+                    const cover = space.cover || `https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?q=80&w=600&auto=format&fit=crop`;
+                    const designCount = this.getSpaceDesigns(space.id).length;
+                    
+                    const el = document.createElement('div');
+                    el.className = 'bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden hover:shadow-xl transition-all cursor-pointer group flex flex-col h-64';
+                    el.innerHTML = `
+                        <div class="h-32 bg-slate-200 relative overflow-hidden" onclick="app.openSpace('${space.id}')">
+                            <img src="${cover}" class="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500" alt="${space.name}">
+                            <div class="absolute inset-0 bg-gradient-to-t from-black/50 to-transparent"></div>
+                        </div>
+                        <div class="p-5 flex-1 flex flex-col justify-between">
+                            <div onclick="app.openSpace('${space.id}')">
+                                <h3 class="font-bold text-slate-900 text-lg line-clamp-1">${space.name}</h3>
+                                <p class="text-sm text-slate-500 mt-1">${designCount} design${designCount > 1 ? 's' : ''}</p>
+                            </div>
+                            <div class="flex justify-end mt-2">
+                                <button onclick="app.deleteSpace('${space.id}', event)" class="w-8 h-8 rounded-lg flex items-center justify-center text-slate-400 hover:bg-red-50 hover:text-red-500 transition-colors" title="Supprimer l'espace">
+                                    <i class="ph ph-trash"></i>
+                                </button>
+                            </div>
+                        </div>
+                    `;
+                    grid.appendChild(el);
+                });
+            },
+
+            // Space Cover Upload Methods
+            openCreateSpaceModal() {
+                if (this.viewerMode) return;
+                this.removeCoverFile(); // reset form state
+                document.getElementById('form-create-space').reset();
+                this.showModal('modal-create-space');
+            },
+
+            handleCoverFile(e) {
+                const file = e.target.files[0];
+                if (!file) return;
+                
+                const reader = new FileReader();
+                reader.onload = (event) => {
+                    this.uploadedCoverBase64 = event.target.result;
+                    document.getElementById('cover-preview').classList.remove('hidden');
+                    document.getElementById('cover-preview-name').textContent = file.name;
+                    document.getElementById('space-cover-url').value = ''; // clear url if file is chosen
+                };
+                reader.readAsDataURL(file);
+            },
+
+            removeCoverFile() {
+                this.uploadedCoverBase64 = null;
+                document.getElementById('space-cover-file').value = '';
+                document.getElementById('cover-preview').classList.add('hidden');
+            },
+
+            createSpace(e) {
+                if (this.viewerMode) return;
+                e.preventDefault();
+                const name = document.getElementById('space-name').value;
+                const urlCover = document.getElementById('space-cover-url').value;
+                
+                // Priority to uploaded file, then URL
+                const finalCover = this.uploadedCoverBase64 || urlCover;
+                
+                const newSpace = {
+                    id: 'space_' + Date.now(),
+                    name,
+                    cover: finalCover,
+                    createdAt: Date.now()
+                };
+                
+                this.db.spaces.push(newSpace);
+                this.saveData();
+                this.hideModal('modal-create-space');
+                this.renderDashboard();
+                this.showToast('Espace créé avec succès !');
+            },
+
+            deleteSpace(id, event) {
+                if (this.viewerMode) return;
+                event.stopPropagation();
+                this.openConfirmModal({
+                    message: 'Voulez-vous vraiment supprimer cet espace et tous ses designs ?',
+                    confirmLabel: 'Supprimer',
+                    variant: 'danger',
+                    onConfirm: () => {
+                        this.db.spaces = this.db.spaces.filter(s => s.id !== id);
+                        this.db.designs = this.db.designs.filter(d => d.spaceId !== id);
+                        this.saveData();
+                        this.renderDashboard();
+                    }
+                });
+            },
+
+            // Canvas & Interactions
+            setupCanvasEvents() {
+                const container = document.getElementById('canvas-container');
+                const inner = document.getElementById('canvas-inner');
+                
+                // Zoom
+                container.addEventListener('wheel', (e) => {
+                    e.preventDefault();
+                    if(this.drag.activeNodeId) return; // don't zoom while dragging node
+
+                    const zoomSensitivity = 0.001;
+                    const delta = e.deltaY * zoomSensitivity;
+                    let newScale = this.canvas.scale - delta;
+                    newScale = Math.min(Math.max(0.1, newScale), 3);
+
+                    const rect = container.getBoundingClientRect();
+                    const mouseX = e.clientX - rect.left;
+                    const mouseY = e.clientY - rect.top;
+
+                    const mouseXBeforeZoom = (mouseX - this.canvas.translateX) / this.canvas.scale;
+                    const mouseYBeforeZoom = (mouseY - this.canvas.translateY) / this.canvas.scale;
+
+                    this.canvas.translateX = mouseX - mouseXBeforeZoom * newScale;
+                    this.canvas.translateY = mouseY - mouseYBeforeZoom * newScale;
+                    this.canvas.scale = newScale;
+
+                    this.updateCanvasTransform();
+                });
+
+                // Pan Start
+                container.addEventListener('mousedown', (e) => {
+                    if (e.button === 2) return; 
+                    if (e.button === 1 || e.target === container || e.target === inner) {
+                        this.canvas.isPanning = true;
+                        this.canvas.startX = e.clientX - this.canvas.translateX;
+                        this.canvas.startY = e.clientY - this.canvas.translateY;
+                        container.style.cursor = 'grabbing';
+                    }
+                });
+
+                // Pan & Drag Node Move
+                window.addEventListener('mousemove', (e) => {
+                    if (this.canvas.isPanning) {
+                        this.canvas.translateX = e.clientX - this.canvas.startX;
+                        this.canvas.translateY = e.clientY - this.canvas.startY;
+                        this.updateCanvasTransform();
+                    }
+                    
+                    if (this.drag.activeNodeId) {
+                        const dx = (e.clientX - this.drag.startX) / this.canvas.scale;
+                        const dy = (e.clientY - this.drag.startY) / this.canvas.scale;
+                        
+                        const newX = this.drag.initialNodeX + dx;
+                        const newY = this.drag.initialNodeY + dy;
+                        
+                        const node = document.getElementById(this.drag.activeNodeId);
+                        node.style.transform = `translate(${newX}px, ${newY}px)`;
+                        
+                        node.dataset.x = newX;
+                        node.dataset.y = newY;
+                    }
+                });
+
+                // Pan & Drag Node End
+                window.addEventListener('mouseup', () => {
+                    if (this.canvas.isPanning) {
+                        this.canvas.isPanning = false;
+                        container.style.cursor = 'grab';
+                    }
+                    if (this.drag.activeNodeId) {
+                        const node = document.getElementById(this.drag.activeNodeId);
+                        const id = this.drag.activeNodeId.replace('node_', '');
+                        const design = this.getDesignCollection().find(d => d.id === id);
+                        
+                        if (design) {
+                            design.x = parseFloat(node.dataset.x);
+                            design.y = parseFloat(node.dataset.y);
+                            if (!this.viewerMode) {
+                                this.saveData();
+                            }
+                        }
+                        
+                        document.getElementById('canvas-container').classList.remove('is-interacting');
+                        this.drag.activeNodeId = null;
+                    }
+                });
+
+                // Context Menu
+                container.addEventListener('contextmenu', (e) => {
+                    if (this.viewerMode) return;
+                    e.preventDefault();
+                    if(e.target !== container && e.target !== inner) return;
+                    
+                    const rect = container.getBoundingClientRect();
+                    this.canvas.targetClickX = ((e.clientX - rect.left) - this.canvas.translateX) / this.canvas.scale;
+                    this.canvas.targetClickY = ((e.clientY - rect.top) - this.canvas.translateY) / this.canvas.scale;
+
+                    const menu = document.getElementById('context-menu');
+                    menu.style.left = `${e.clientX}px`;
+                    menu.style.top = `${e.clientY}px`;
+                    menu.classList.remove('hidden');
+                });
+            },
+
+            updateCanvasTransform() {
+                const inner = document.getElementById('canvas-inner');
+                inner.style.transform = `translate(${this.canvas.translateX}px, ${this.canvas.translateY}px) scale(${this.canvas.scale})`;
+                
+                const container = document.getElementById('canvas-container');
+                container.style.backgroundPosition = `${this.canvas.translateX}px ${this.canvas.translateY}px`;
+                container.style.backgroundSize = `${20 * this.canvas.scale}px ${20 * this.canvas.scale}px`;
+                
+                document.getElementById('zoom-indicator').textContent = `${Math.round(this.canvas.scale * 100)}%`;
+            },
+
+            resetCanvasView() {
+                this.canvas.scale = 1;
+                this.canvas.translateX = 0;
+                this.canvas.translateY = 0;
+                this.updateCanvasTransform();
+                this.hideContextMenu();
+            },
+
+            // Node Dragging Setup
+            setupNodeDragEvents() {
+                document.getElementById('canvas-inner').addEventListener('mousedown', (e) => {
+                    const header = e.target.closest('.drag-handle');
+                    // Ensure we don't start drag if clicking a button inside header
+                    if (header && !e.target.closest('button')) {
+                        const node = header.closest('.design-node');
+                        const designId = node.id.replace('node_', '');
+                        const design = this.getDesignCollection().find(d => d.id === designId);
+                        
+                        if(design) {
+                            this.drag.activeNodeId = node.id;
+                            this.drag.startX = e.clientX;
+                            this.drag.startY = e.clientY;
+                            this.drag.initialNodeX = design.x;
+                            this.drag.initialNodeY = design.y;
+                            
+                            document.getElementById('canvas-container').classList.add('is-interacting');
+                            node.parentNode.appendChild(node);
+                        }
+                    }
+                });
+            },
+
+            // Designs Management
+            renderCanvas() {
+                const inner = document.getElementById('canvas-inner');
+                inner.innerHTML = '';
+                
+                const designs = this.getSpaceDesigns(this.currentSpaceId);
+                designs.forEach(design => {
+                    this.createDesignNodeElement(design, inner);
+                });
+            },
+
+            createDesignNodeElement(design, container) {
+                const el = document.createElement('div');
+                el.id = `node_${design.id}`;
+                el.className = 'design-node absolute bg-white rounded-xl shadow-xl border border-slate-200 flex flex-col group';
+                
+                el.style.width = design.width ? `${design.width}px` : '1024px';
+                el.style.height = design.height ? `${design.height}px` : 'auto';
+                el.style.transform = `translate(${design.x}px, ${design.y}px)`;
+                el.dataset.x = design.x;
+                el.dataset.y = design.y;
+
+                const iframeContent = `
+                    <!DOCTYPE html>
+                    <html>
+                    <head>
+                        <script src="https://cdn.tailwindcss.com"><\/script>
+                        <style>body { margin: 0; padding: 0; font-family: system-ui, sans-serif; }</style>
+                    </head>
+                    <body>
+                        ${design.html}
+                    </body>
+                    </html>
+                `;
+
+                const deleteButton = this.viewerMode ? '' : `
+                            <button onclick="app.deleteDesign('${design.id}')" class="w-7 h-7 flex items-center justify-center rounded hover:bg-red-500/20 text-slate-400 hover:text-red-400 transition-colors" title="Supprimer">
+                                <i class="ph ph-trash text-lg"></i>
+                            </button>`;
+                const resizeIndicator = `
+                    <div class="absolute bottom-0 right-0 w-4 h-4 cursor-se-resize pointer-events-none opacity-0 group-hover:opacity-100 transition-opacity">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="w-full h-full text-slate-400 p-0.5"><path d="M21 15v6h-6M21 21l-7-7" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                    </div>`;
+
+                el.innerHTML = `
+                    <div class="drag-handle h-10 bg-slate-800 text-white rounded-t-xl flex justify-between items-center px-4 cursor-grab active:cursor-grabbing border-b border-slate-700 select-none">
+                        <div class="flex items-center gap-3 truncate">
+                            <i class="ph ph-dots-six-vertical text-slate-400"></i>
+                            <span class="font-semibold text-sm truncate max-w-[200px]">${design.name}</span>
+                            <span class="text-xs bg-slate-700 px-2 py-0.5 rounded-full text-brand-300 font-mono">${design.version}</span>
+                        </div>
+                        <div class="flex items-center">
+                            <!-- Responsive Buttons -->
+                            <div class="flex items-center gap-1 border-r border-slate-600 pr-2 mr-2">
+                                <button onclick="app.resizeDesign('${design.id}', 375, 667)" class="w-7 h-7 flex items-center justify-center rounded hover:bg-slate-700 text-slate-400 hover:text-white transition-colors" title="Vue Mobile (375px)">
+                                    <i class="ph ph-device-mobile text-lg"></i>
+                                </button>
+                                <button onclick="app.resizeDesign('${design.id}', 768, 1024)" class="w-7 h-7 flex items-center justify-center rounded hover:bg-slate-700 text-slate-400 hover:text-white transition-colors" title="Vue Tablette (768px)">
+                                    <i class="ph ph-device-tablet text-lg"></i>
+                                </button>
+                                <button onclick="app.resizeDesign('${design.id}', 1280, 800)" class="w-7 h-7 flex items-center justify-center rounded hover:bg-slate-700 text-slate-400 hover:text-white transition-colors" title="Vue PC (1280px)">
+                                    <i class="ph ph-desktop text-lg"></i>
+                                </button>
+                            </div>
+                            ${deleteButton}
+                        </div>
+                    </div>
+                    <!-- Iframe container -->
+                    <iframe srcdoc="${this.escapeHTMLForAttribute(iframeContent)}"></iframe>
+                    
+                    <!-- Resize Handle Indicator -->
+                    ${resizeIndicator}
+                `;
+
+                // Save width/height on mouse up if resized manually via CSS resize
+                el.addEventListener('mouseup', () => {
+                    const rect = el.getBoundingClientRect();
+                    const scaledWidth = rect.width / this.canvas.scale;
+                    const scaledHeight = rect.height / this.canvas.scale;
+                    
+                    if(Math.abs(scaledWidth - (design.width || 1024)) > 5 || Math.abs(scaledHeight - (design.height || 0)) > 5) {
+                        design.width = scaledWidth;
+                        design.height = scaledHeight;
+                        if (!this.viewerMode) {
+                            this.saveData();
+                        }
+                    }
+                });
+
+                container.appendChild(el);
+            },
+
+            // HTML Upload handler
+            handleHtmlFile(e) {
+                const file = e.target.files[0];
+                if (!file) return;
+
+                const reader = new FileReader();
+                reader.onload = (event) => {
+                    document.getElementById('design-html').value = event.target.result;
+                    
+                    // Auto-fill design name based on filename if empty
+                    const nameInput = document.getElementById('design-name');
+                    if(!nameInput.value) {
+                        nameInput.value = file.name.replace('.html', '');
+                    }
+                    
+                    this.showToast('Fichier HTML importé avec succès');
+                };
+                reader.readAsText(file);
+                
+                // Reset file input so the same file can be selected again if needed
+                e.target.value = '';
+            },
+
+            // Responsive resize function
+            resizeDesign(id, width, height) {
+                const design = this.getDesignCollection().find(d => d.id === id);
+                if (this.viewerMode) {
+                    const node = document.getElementById(`node_${id}`);
+                    if(node) {
+                        node.style.width = `${width}px`;
+                        node.style.height = `${height}px`;
+                    }
+                    if (design) {
+                        design.width = width;
+                        design.height = height;
+                    }
+                    return;
+                }
+                if(design) {
+                    design.width = width;
+                    design.height = height;
+                    this.saveData();
+                    
+                    const node = document.getElementById(`node_${id}`);
+                    if(node) {
+                        node.style.width = `${width}px`;
+                        node.style.height = `${height}px`;
+                    }
+                }
+            },
+
+            openAddDesignModal() {
+                if (this.viewerMode) return;
+                this.hideContextMenu();
+                document.getElementById('form-add-design').reset();
+                document.getElementById('design-version').value = 'v1.0';
+                this.showModal('modal-add-design');
+            },
+
+            saveDesign(e) {
+                if (this.viewerMode) return;
+                e.preventDefault();
+                const name = document.getElementById('design-name').value;
+                const version = document.getElementById('design-version').value;
+                const html = document.getElementById('design-html').value;
+                
+                const newDesign = {
+                    id: 'dsgn_' + Date.now(),
+                    spaceId: this.currentSpaceId,
+                    name,
+                    version,
+                    html,
+                    x: this.canvas.targetClickX,
+                    y: this.canvas.targetClickY,
+                    width: 1024, // Default width PC
+                    height: 800
+                };
+                
+                this.db.designs.push(newDesign);
+                this.saveData();
+                this.hideModal('modal-add-design');
+                
+                this.renderCanvas();
+                this.showToast('Design ajouté au canva !');
+            },
+
+            deleteDesign(id) {
+                if (this.viewerMode) return;
+                this.openConfirmModal({
+                    message: 'Supprimer ce design du canva ?',
+                    confirmLabel: 'Supprimer',
+                    variant: 'danger',
+                    onConfirm: () => {
+                        this.db.designs = this.db.designs.filter(d => d.id !== id);
+                        this.saveData();
+                        this.renderCanvas();
+                    }
+                });
+            },
+
+            // Utilities
+            showModal(id) { document.getElementById(id).classList.remove('hidden'); },
+            hideModal(id) { document.getElementById(id).classList.add('hidden'); },
+            hideContextMenu() { document.getElementById('context-menu').classList.add('hidden'); },
+            
+            showToast(msg) {
+                const t = document.getElementById('toast');
+                document.getElementById('toast-message').textContent = msg;
+                t.classList.remove('translate-y-20', 'opacity-0');
+                setTimeout(() => t.classList.add('translate-y-20', 'opacity-0'), 3000);
+            },
+
+            shareSpace() {
+                if (this.viewerMode) {
+                    this.showToast('Mode lecture uniquement');
+                    return;
+                }
+                if (!this.currentSpaceId) {
+                    this.showToast('Ouvrez un espace avant de le partager');
+                    return;
+                }
+                const space = this.getSpaceById(this.currentSpaceId);
+                if (!space) return;
+                const designs = this.getSpaceDesigns(space.id);
+                const payload = {
+                    space: JSON.parse(JSON.stringify(space)),
+                    designs: JSON.parse(JSON.stringify(designs))
+                };
+                const encoded = encodeURIComponent(this.base64EncodeUnicode(JSON.stringify(payload)));
+                const hasOrigin = window.location.origin && window.location.origin !== 'null';
+                // When running from file:// the origin is "null", so fall back to the current file path
+                const baseUrl = hasOrigin
+                    ? `${window.location.origin}${window.location.pathname}`
+                    : window.location.href.split('#')[0].split('?')[0];
+                const shareUrl = `${baseUrl}?space=${space.id}&share=${encoded}`;
+                navigator.clipboard.writeText(shareUrl).then(() => {
+                    this.showToast('Lien de partage copié dans le presse-papier !');
+                }).catch(() => {
+                    this.showToast('Impossible de copier le lien. Copiez-le manuellement : ' + shareUrl);
+                });
+            },
+
+            escapeHTMLForAttribute(html) {
+                return html
+                    .replace(/&/g, "&amp;")
+                    .replace(/</g, "&lt;")
+                    .replace(/>/g, "&gt;")
+                    .replace(/"/g, "&quot;")
+                    .replace(/'/g, "&#039;");
+            }
+        };
+
+        // Boot
+        window.addEventListener('DOMContentLoaded', () => app.init());
+        window.handleConfirmResponse = (confirmed) => app.handleConfirmResponse(confirmed);
+
+    </script>
+</body>
+</html>

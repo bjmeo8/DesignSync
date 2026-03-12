@@ -22,6 +22,8 @@
     </script>
     <style>
         body { font-family: 'Inter', sans-serif; overflow: hidden; background-color: #f8fafc; }
+        body.viewer-mode .viewer-hidden { display: none !important; }
+        body.viewer-mode #view-dashboard { display: none !important; }
         
         /* Custom Scrollbar */
         ::-webkit-scrollbar { width: 8px; height: 8px; }
@@ -78,7 +80,7 @@
                     </div>
                     <h1 class="text-2xl font-bold text-slate-900">DesignSync</h1>
                 </div>
-                <button onclick="app.openCreateSpaceModal()" class="bg-slate-900 hover:bg-slate-800 text-white px-5 py-2.5 rounded-lg font-medium transition-all shadow-md flex items-center gap-2">
+                <button id="btn-new-space" onclick="app.openCreateSpaceModal()" class="viewer-hidden bg-slate-900 hover:bg-slate-800 text-white px-5 py-2.5 rounded-lg font-medium transition-all shadow-md flex items-center gap-2">
                     <i class="ph ph-plus-circle text-lg"></i>
                     Nouvel espace
                 </button>
@@ -98,7 +100,7 @@
             <!-- Canvas Toolbar -->
             <div class="absolute top-0 left-0 w-full p-4 flex justify-between items-center z-40 pointer-events-none">
                 <div class="flex items-center gap-4 bg-white/90 backdrop-blur-md px-4 py-2 rounded-xl shadow-sm border border-slate-200 pointer-events-auto">
-                    <button onclick="app.openDashboard()" class="text-slate-500 hover:text-slate-900 transition-colors">
+                    <button id="btn-back-dashboard" onclick="app.openDashboard()" class="text-slate-500 hover:text-slate-900 transition-colors viewer-hidden">
                         <i class="ph ph-arrow-left text-xl"></i>
                     </button>
                     <div class="h-6 w-px bg-slate-200"></div>
@@ -109,7 +111,7 @@
                     <div class="bg-white/90 backdrop-blur-md px-3 py-2 rounded-xl shadow-sm border border-slate-200 text-sm font-medium text-slate-600 flex items-center gap-2">
                         <i class="ph ph-magnifying-glass-plus"></i> <span id="zoom-indicator">100%</span>
                     </div>
-                    <button onclick="app.shareSpace()" class="bg-brand-600 hover:bg-brand-500 text-white px-5 py-2 rounded-xl font-medium transition-all shadow-md shadow-brand-500/20 flex items-center gap-2">
+                    <button id="btn-share-space" onclick="app.shareSpace()" class="viewer-hidden bg-brand-600 hover:bg-brand-500 text-white px-5 py-2 rounded-xl font-medium transition-all shadow-md shadow-brand-500/20 flex items-center gap-2">
                         <i class="ph ph-share-network text-lg"></i>
                         Partager
                     </button>
@@ -126,7 +128,7 @@
     </div>
 
     <!-- ================= CONTEXT MENU ================= -->
-    <div id="context-menu" class="hidden absolute z-50 bg-white rounded-xl shadow-xl border border-slate-100 py-1.5 min-w-[200px] text-sm font-medium text-slate-700 fade-in">
+    <div id="context-menu" class="viewer-hidden hidden absolute z-50 bg-white rounded-xl shadow-xl border border-slate-100 py-1.5 min-w-[200px] text-sm font-medium text-slate-700 fade-in">
         <button onclick="app.openAddDesignModal()" class="w-full text-left px-4 py-2 hover:bg-slate-50 hover:text-brand-600 flex items-center gap-2 transition-colors">
             <i class="ph ph-plus-square text-lg"></i> Ajouter un design ici
         </button>
@@ -235,6 +237,8 @@
             db: { spaces: [], designs: [] },
             currentSpaceId: null,
             uploadedCoverBase64: null,
+            viewerMode: false,
+            sharedData: null,
             
             // Canvas State
             canvas: {
@@ -260,7 +264,10 @@
             // Initialization
             init() {
                 this.loadData();
-                this.renderDashboard();
+                const shared = this.checkSharedLink();
+                if (!shared) {
+                    this.renderDashboard();
+                }
                 this.setupCanvasEvents();
                 this.setupNodeDragEvents();
                 
@@ -268,6 +275,59 @@
                 document.addEventListener('click', (e) => {
                     if (e.button !== 2) this.hideContextMenu();
                 });
+
+                if (shared) {
+                    this.enterSharedView();
+                }
+            },
+
+            base64EncodeUnicode(str) {
+                return btoa(encodeURIComponent(str).replace(/%([0-9A-F]{2})/g, (_, p1) =>
+                    String.fromCharCode('0x' + p1)
+                ));
+            },
+            base64DecodeUnicode(str) {
+                return decodeURIComponent(atob(str).split('').map(c =>
+                    '%' + ('00' + c.charCodeAt(0).toString(16)).slice(-2)
+                ).join(''));
+            },
+
+            checkSharedLink() {
+                const params = new URLSearchParams(window.location.search);
+                const shareParam = params.get('share');
+                if (!shareParam) return false;
+                try {
+                    const decoded = JSON.parse(this.base64DecodeUnicode(decodeURIComponent(shareParam)));
+                    if (decoded?.space && decoded?.designs) {
+                        this.viewerMode = true;
+                        this.sharedData = {
+                            space: decoded.space,
+                            designs: decoded.designs
+                        };
+                        document.body.classList.add('viewer-mode');
+                        return true;
+                    }
+                } catch (e) {
+                    console.error('Lien de partage invalide', e);
+                }
+                return false;
+            },
+
+            enterSharedView() {
+                if (!this.sharedData?.space) {
+                    this.showToast('Lien de partage invalide');
+                    return;
+                }
+                this.currentSpaceId = this.sharedData.space.id;
+                const dashboard = document.getElementById('view-dashboard');
+                dashboard.classList.add('hidden');
+                const canvasView = document.getElementById('view-canvas');
+                canvasView.classList.remove('hidden');
+                const titleEl = document.getElementById('current-space-title');
+                if (titleEl) titleEl.textContent = this.sharedData.space.name;
+                document.body.classList.add('viewer-mode');
+                this.resetCanvasView();
+                this.renderCanvas();
             },
 
             // Database Operations (localStorage)
@@ -278,18 +338,34 @@
                 }
             },
             saveData() {
+                if (this.viewerMode) return;
                 try {
                     localStorage.setItem('designsync_db', JSON.stringify(this.db));
                 } catch (e) {
                     alert("Attention: Le stockage local est plein. Essayez de supprimer des espaces ou d'utiliser des URLs d'images au lieu d'importer des fichiers lourds.");
                 }
             },
+            getActiveSpaces() {
+                if (this.viewerMode && this.sharedData) return [this.sharedData.space];
+                return this.db.spaces;
+            },
+            getDesignCollection() {
+                if (this.viewerMode && this.sharedData) return this.sharedData.designs || [];
+                return this.db.designs;
+            },
+            getSpaceById(id) {
+                if (this.viewerMode && this.sharedData) {
+                    return this.sharedData.space && this.sharedData.space.id === id ? this.sharedData.space : null;
+                }
+                return this.db.spaces.find(s => s.id === id);
+            },
             getSpaceDesigns(spaceId) {
-                return this.db.designs.filter(d => d.spaceId === spaceId);
+                return this.getDesignCollection().filter(d => d.spaceId === spaceId);
             },
 
             // View Management
             openDashboard() {
+                if (this.viewerMode) return;
                 this.currentSpaceId = null;
                 const viewCanvas = document.getElementById('view-canvas');
                 // Remove display property to prevent it from overriding the hidden class
@@ -301,8 +377,9 @@
             },
             
             openSpace(id) {
+                if (this.viewerMode) return;
                 this.currentSpaceId = id;
-                const space = this.db.spaces.find(s => s.id === id);
+                const space = this.getSpaceById(id);
                 document.getElementById('current-space-title').textContent = space.name;
                 
                 document.getElementById('view-dashboard').classList.add('hidden');
@@ -361,6 +438,7 @@
 
             // Space Cover Upload Methods
             openCreateSpaceModal() {
+                if (this.viewerMode) return;
                 this.removeCoverFile(); // reset form state
                 document.getElementById('form-create-space').reset();
                 this.showModal('modal-create-space');
@@ -387,6 +465,7 @@
             },
 
             createSpace(e) {
+                if (this.viewerMode) return;
                 e.preventDefault();
                 const name = document.getElementById('space-name').value;
                 const urlCover = document.getElementById('space-cover-url').value;
@@ -409,13 +488,19 @@
             },
 
             deleteSpace(id, event) {
+                if (this.viewerMode) return;
                 event.stopPropagation();
-                if(confirm('Voulez-vous vraiment supprimer cet espace et tous ses designs ?')) {
-                    this.db.spaces = this.db.spaces.filter(s => s.id !== id);
-                    this.db.designs = this.db.designs.filter(d => d.spaceId !== id);
-                    this.saveData();
-                    this.renderDashboard();
-                }
+                this.openConfirmModal({
+                    message: 'Voulez-vous vraiment supprimer cet espace et tous ses designs ?',
+                    confirmLabel: 'Supprimer',
+                    variant: 'danger',
+                    onConfirm: () => {
+                        this.db.spaces = this.db.spaces.filter(s => s.id !== id);
+                        this.db.designs = this.db.designs.filter(d => d.spaceId !== id);
+                        this.saveData();
+                        this.renderDashboard();
+                    }
+                });
             },
 
             // Canvas & Interactions
@@ -490,12 +575,14 @@
                     if (this.drag.activeNodeId) {
                         const node = document.getElementById(this.drag.activeNodeId);
                         const id = this.drag.activeNodeId.replace('node_', '');
-                        const design = this.db.designs.find(d => d.id === id);
+                        const design = this.getDesignCollection().find(d => d.id === id);
                         
                         if (design) {
                             design.x = parseFloat(node.dataset.x);
                             design.y = parseFloat(node.dataset.y);
-                            this.saveData();
+                            if (!this.viewerMode) {
+                                this.saveData();
+                            }
                         }
                         
                         document.getElementById('canvas-container').classList.remove('is-interacting');
@@ -505,6 +592,7 @@
 
                 // Context Menu
                 container.addEventListener('contextmenu', (e) => {
+                    if (this.viewerMode) return;
                     e.preventDefault();
                     if(e.target !== container && e.target !== inner) return;
                     
@@ -546,7 +634,7 @@
                     if (header && !e.target.closest('button')) {
                         const node = header.closest('.design-node');
                         const designId = node.id.replace('node_', '');
-                        const design = this.db.designs.find(d => d.id === designId);
+                        const design = this.getDesignCollection().find(d => d.id === designId);
                         
                         if(design) {
                             this.drag.activeNodeId = node.id;
@@ -597,6 +685,15 @@
                     </html>
                 `;
 
+                const deleteButton = this.viewerMode ? '' : `
+                            <button onclick="app.deleteDesign('${design.id}')" class="w-7 h-7 flex items-center justify-center rounded hover:bg-red-500/20 text-slate-400 hover:text-red-400 transition-colors" title="Supprimer">
+                                <i class="ph ph-trash text-lg"></i>
+                            </button>`;
+                const resizeIndicator = `
+                    <div class="absolute bottom-0 right-0 w-4 h-4 cursor-se-resize pointer-events-none opacity-0 group-hover:opacity-100 transition-opacity">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="w-full h-full text-slate-400 p-0.5"><path d="M21 15v6h-6M21 21l-7-7" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                    </div>`;
+
                 el.innerHTML = `
                     <div class="drag-handle h-10 bg-slate-800 text-white rounded-t-xl flex justify-between items-center px-4 cursor-grab active:cursor-grabbing border-b border-slate-700 select-none">
                         <div class="flex items-center gap-3 truncate">
@@ -617,19 +714,14 @@
                                     <i class="ph ph-desktop text-lg"></i>
                                 </button>
                             </div>
-                            <!-- Delete Button -->
-                            <button onclick="app.deleteDesign('${design.id}')" class="w-7 h-7 flex items-center justify-center rounded hover:bg-red-500/20 text-slate-400 hover:text-red-400 transition-colors" title="Supprimer">
-                                <i class="ph ph-trash text-lg"></i>
-                            </button>
+                            ${deleteButton}
                         </div>
                     </div>
                     <!-- Iframe container -->
                     <iframe srcdoc="${this.escapeHTMLForAttribute(iframeContent)}"></iframe>
                     
                     <!-- Resize Handle Indicator -->
-                    <div class="absolute bottom-0 right-0 w-4 h-4 cursor-se-resize pointer-events-none opacity-0 group-hover:opacity-100 transition-opacity">
-                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="w-full h-full text-slate-400 p-0.5"><path d="M21 15v6h-6M21 21l-7-7" stroke-linecap="round" stroke-linejoin="round"/></svg>
-                    </div>
+                    ${resizeIndicator}
                 `;
 
                 // Save width/height on mouse up if resized manually via CSS resize
@@ -641,7 +733,9 @@
                     if(Math.abs(scaledWidth - (design.width || 1024)) > 5 || Math.abs(scaledHeight - (design.height || 0)) > 5) {
                         design.width = scaledWidth;
                         design.height = scaledHeight;
-                        this.saveData();
+                        if (!this.viewerMode) {
+                            this.saveData();
+                        }
                     }
                 });
 
@@ -673,7 +767,19 @@
 
             // Responsive resize function
             resizeDesign(id, width, height) {
-                const design = this.db.designs.find(d => d.id === id);
+                const design = this.getDesignCollection().find(d => d.id === id);
+                if (this.viewerMode) {
+                    const node = document.getElementById(`node_${id}`);
+                    if(node) {
+                        node.style.width = `${width}px`;
+                        node.style.height = `${height}px`;
+                    }
+                    if (design) {
+                        design.width = width;
+                        design.height = height;
+                    }
+                    return;
+                }
                 if(design) {
                     design.width = width;
                     design.height = height;
@@ -688,6 +794,7 @@
             },
 
             openAddDesignModal() {
+                if (this.viewerMode) return;
                 this.hideContextMenu();
                 document.getElementById('form-add-design').reset();
                 document.getElementById('design-version').value = 'v1.0';
@@ -695,6 +802,7 @@
             },
 
             saveDesign(e) {
+                if (this.viewerMode) return;
                 e.preventDefault();
                 const name = document.getElementById('design-name').value;
                 const version = document.getElementById('design-version').value;
@@ -721,11 +829,17 @@
             },
 
             deleteDesign(id) {
-                if(confirm('Supprimer ce design du canva ?')) {
-                    this.db.designs = this.db.designs.filter(d => d.id !== id);
-                    this.saveData();
-                    this.renderCanvas();
-                }
+                if (this.viewerMode) return;
+                this.openConfirmModal({
+                    message: 'Supprimer ce design du canva ?',
+                    confirmLabel: 'Supprimer',
+                    variant: 'danger',
+                    onConfirm: () => {
+                        this.db.designs = this.db.designs.filter(d => d.id !== id);
+                        this.saveData();
+                        this.renderCanvas();
+                    }
+                });
             },
 
             // Utilities
@@ -741,10 +855,32 @@
             },
 
             shareSpace() {
-                navigator.clipboard.writeText(window.location.href).then(() => {
+                if (this.viewerMode) {
+                    this.showToast('Mode lecture uniquement');
+                    return;
+                }
+                if (!this.currentSpaceId) {
+                    this.showToast('Ouvrez un espace avant de le partager');
+                    return;
+                }
+                const space = this.getSpaceById(this.currentSpaceId);
+                if (!space) return;
+                const designs = this.getSpaceDesigns(space.id);
+                const payload = {
+                    space: JSON.parse(JSON.stringify(space)),
+                    designs: JSON.parse(JSON.stringify(designs))
+                };
+                const encoded = encodeURIComponent(this.base64EncodeUnicode(JSON.stringify(payload)));
+                const hasOrigin = window.location.origin && window.location.origin !== 'null';
+                // When running from file:// the origin is "null", so fall back to the current file path
+                const baseUrl = hasOrigin
+                    ? `${window.location.origin}${window.location.pathname}`
+                    : window.location.href.split('#')[0].split('?')[0];
+                const shareUrl = `${baseUrl}?space=${space.id}&share=${encoded}`;
+                navigator.clipboard.writeText(shareUrl).then(() => {
                     this.showToast('Lien de partage copié dans le presse-papier !');
                 }).catch(() => {
-                    this.showToast('Lien généré (Simulation de partage active)');
+                    this.showToast('Impossible de copier le lien. Copiez-le manuellement : ' + shareUrl);
                 });
             },
 
@@ -760,6 +896,7 @@
 
         // Boot
         window.addEventListener('DOMContentLoaded', () => app.init());
+        window.handleConfirmResponse = (confirmed) => app.handleConfirmResponse(confirmed);
 
     </script>
 </body>

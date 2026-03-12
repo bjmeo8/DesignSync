@@ -291,23 +291,38 @@
                     '%' + ('00' + c.charCodeAt(0).toString(16)).slice(-2)
                 ).join(''));
             },
+            getUrlParam(key) {
+                const searchParams = new URLSearchParams(window.location.search || '');
+                if (searchParams.has(key)) return searchParams.get(key);
+                if (window.location.hash && window.location.hash.length > 1) {
+                    const hashParams = new URLSearchParams(window.location.hash.substring(1));
+                    if (hashParams.has(key)) return hashParams.get(key);
+                }
+                return null;
+            },
+            normalizeEncodedString(value) {
+                let current = value;
+                const visited = new Set();
+                while (current && current.includes('%') && !visited.has(current)) {
+                    visited.add(current);
+                    try {
+                        const decoded = decodeURIComponent(current);
+                        if (decoded === current) break;
+                        current = decoded;
+                    } catch {
+                        break;
+                    }
+                }
+                return current;
+            },
 
             checkSharedLink() {
-                const params = new URLSearchParams(window.location.search);
-                let shareParam = params.get('share');
-                if (!shareParam && window.location.hash) {
-                    const hashParams = new URLSearchParams(window.location.hash.substring(1));
-                    shareParam = hashParams.get('share');
-                }
+                const shareParam = this.getUrlParam('share');
                 if (!shareParam) return false;
                 
                 const candidateValues = [shareParam];
-                // Support legacy links where the share param was already URI encoded
-                try {
-                    if (shareParam !== decodeURIComponent(shareParam)) {
-                        candidateValues.push(decodeURIComponent(shareParam));
-                    }
-                } catch {}
+                const normalized = this.normalizeEncodedString(shareParam);
+                if (normalized !== shareParam) candidateValues.push(normalized);
                 
                 for (const value of candidateValues) {
                     try {

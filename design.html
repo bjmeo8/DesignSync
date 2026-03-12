@@ -294,22 +294,39 @@
 
             checkSharedLink() {
                 const params = new URLSearchParams(window.location.search);
-                const shareParam = params.get('share');
-                if (!shareParam) return false;
-                try {
-                    const decoded = JSON.parse(this.base64DecodeUnicode(decodeURIComponent(shareParam)));
-                    if (decoded?.space && decoded?.designs) {
-                        this.viewerMode = true;
-                        this.sharedData = {
-                            space: decoded.space,
-                            designs: decoded.designs
-                        };
-                        document.body.classList.add('viewer-mode');
-                        return true;
-                    }
-                } catch (e) {
-                    console.error('Lien de partage invalide', e);
+                let shareParam = params.get('share');
+                if (!shareParam && window.location.hash) {
+                    const hashParams = new URLSearchParams(window.location.hash.substring(1));
+                    shareParam = hashParams.get('share');
                 }
+                if (!shareParam) return false;
+                
+                const candidateValues = [shareParam];
+                // Support legacy links where the share param was already URI encoded
+                try {
+                    if (shareParam !== decodeURIComponent(shareParam)) {
+                        candidateValues.push(decodeURIComponent(shareParam));
+                    }
+                } catch {}
+                
+                for (const value of candidateValues) {
+                    try {
+                        const decoded = JSON.parse(this.base64DecodeUnicode(value));
+                        if (decoded?.space && decoded?.designs) {
+                            this.viewerMode = true;
+                            this.sharedData = {
+                                space: decoded.space,
+                                designs: decoded.designs
+                            };
+                            document.body.classList.add('viewer-mode');
+                            return true;
+                        }
+                    } catch (e) {
+                        continue;
+                    }
+                }
+                
+                console.error('Lien de partage invalide');
                 return false;
             },
 
@@ -876,7 +893,7 @@
                 const baseUrl = hasOrigin
                     ? `${window.location.origin}${window.location.pathname}`
                     : window.location.href.split('#')[0].split('?')[0];
-                const shareUrl = `${baseUrl}?space=${space.id}&share=${encoded}`;
+                const shareUrl = `${baseUrl}#space=${encodeURIComponent(space.id)}&share=${encoded}`;
                 navigator.clipboard.writeText(shareUrl).then(() => {
                     this.showToast('Lien de partage copié dans le presse-papier !');
                 }).catch(() => {

@@ -292,11 +292,29 @@
                 ).join(''));
             },
             getUrlParam(key) {
-                const searchParams = new URLSearchParams(window.location.search || '');
-                if (searchParams.has(key)) return searchParams.get(key);
-                if (window.location.hash && window.location.hash.length > 1) {
-                    const hashParams = new URLSearchParams(window.location.hash.substring(1));
-                    if (hashParams.has(key)) return hashParams.get(key);
+                const sections = [];
+                const search = window.location.search;
+                if (search && search.length > 1) sections.push(search.substring(1));
+                const hash = window.location.hash;
+                if (hash && hash.length > 1) {
+                    const hashContent = hash.substring(1);
+                    sections.push(hashContent);
+                    const hashQueryIndex = hashContent.indexOf('?');
+                    if (hashQueryIndex !== -1 && hashQueryIndex + 1 < hashContent.length) {
+                        sections.push(hashContent.substring(hashQueryIndex + 1));
+                    }
+                }
+                for (const segment of sections) {
+                    const pairs = segment.split('&');
+                    for (const pair of pairs) {
+                        if (!pair) continue;
+                        const [rawKey, rawValue = ''] = pair.split('=');
+                        if (!rawKey) continue;
+                        const decodedKey = decodeURIComponent(rawKey.replace(/\+/g, ' '));
+                        if (decodedKey === key) {
+                            return decodeURIComponent(rawValue.replace(/\+/g, ' '));
+                        }
+                    }
                 }
                 return null;
             },

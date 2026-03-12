@@ -291,15 +291,35 @@
                     '%' + ('00' + c.charCodeAt(0).toString(16)).slice(-2)
                 ).join(''));
             },
-            getUrlParam(key) {
-                const pattern = new RegExp(`(?:[?&#])${key}=([^&#]*)`, 'i');
-                const match = pattern.exec(window.location.href);
-                if (!match) return null;
-                try {
-                    return decodeURIComponent(match[1]);
-                } catch {
-                    return match[1];
+            toUrlSafeBase64(str) {
+                return str.replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+            },
+            fromUrlSafeBase64(str) {
+                if (!str) return str;
+                let base64 = str.replace(/-/g, '+').replace(/_/g, '/');
+                const paddingNeeded = base64.length % 4;
+                if (paddingNeeded) {
+                    base64 += '='.repeat(4 - paddingNeeded);
                 }
+                return base64;
+            },
+            getUrlParam(key) {
+                const sections = [];
+                if (window.location.hash && window.location.hash.length > 1) {
+                    sections.push(window.location.hash.substring(1));
+                }
+                if (window.location.search && window.location.search.length > 1) {
+                    sections.push(window.location.search.substring(1));
+                }
+                for (const section of sections) {
+                    try {
+                        const params = new URLSearchParams(section);
+                        if (params.has(key)) return params.get(key);
+                    } catch (e) {
+                        continue;
+                    }
+                }
+                return null;
             },
             normalizeEncodedString(value) {
                 let current = value;
@@ -322,31 +342,34 @@
                 if (!shareParam) return false;
                 
                 const candidateValues = [shareParam];
-                const plusFixed = shareParam.replace(/ /g, '+');
-                if (plusFixed !== shareParam) candidateValues.push(plusFixed);
                 const normalized = this.normalizeEncodedString(shareParam);
                 if (normalized !== shareParam) candidateValues.push(normalized);
-                if (normalized !== plusFixed) {
-                    const normalizedPlusFixed = normalized.replace(/ /g, '+');
-                    if (!candidateValues.includes(normalizedPlusFixed)) {
-                        candidateValues.push(normalizedPlusFixed);
-                    }
-                }
                 
                 for (const value of candidateValues) {
-                    try {
-                        const decoded = JSON.parse(this.base64DecodeUnicode(value));
-                        if (decoded?.space && decoded?.designs) {
-                            this.viewerMode = true;
-                            this.sharedData = {
-                                space: decoded.space,
-                                designs: decoded.designs
-                            };
-                            document.body.classList.add('viewer-mode');
-                            return true;
+                    const possibleInputs = [value];
+                    const plusFixed = value.replace(/ /g, '+');
+                    if (plusFixed !== value) {
+                        possibleInputs.push(plusFixed);
+                    }
+                    const urlSafeConversion = this.fromUrlSafeBase64(value);
+                    if (urlSafeConversion !== value) {
+                        possibleInputs.push(urlSafeConversion);
+                    }
+                    for (const input of possibleInputs) {
+                        try {
+                            const decoded = JSON.parse(this.base64DecodeUnicode(input));
+                            if (decoded?.space && decoded?.designs) {
+                                this.viewerMode = true;
+                                this.sharedData = {
+                                    space: decoded.space,
+                                    designs: decoded.designs
+                                };
+                                document.body.classList.add('viewer-mode');
+                                return true;
+                            }
+                        } catch (e) {
+                            continue;
                         }
-                    } catch (e) {
-                        continue;
                     }
                 }
                 
@@ -911,13 +934,13 @@
                     space: JSON.parse(JSON.stringify(space)),
                     designs: JSON.parse(JSON.stringify(designs))
                 };
-                const encoded = encodeURIComponent(this.base64EncodeUnicode(JSON.stringify(payload)));
+                const encoded = this.toUrlSafeBase64(this.base64EncodeUnicode(JSON.stringify(payload)));
                 const hasOrigin = window.location.origin && window.location.origin !== 'null';
                 // When running from file:// the origin is "null", so fall back to the current file path
                 const baseUrl = hasOrigin
                     ? `${window.location.origin}${window.location.pathname}`
                     : window.location.href.split('#')[0].split('?')[0];
-                const shareUrl = `${baseUrl}#space=${encodeURIComponent(space.id)}&share=${encoded}`;
+                const shareUrl = `${baseUrl}#share=${encoded}`;
                 navigator.clipboard.writeText(shareUrl).then(() => {
                     this.showToast('Lien de partage copié dans le presse-papier !');
                 }).catch(() => {
